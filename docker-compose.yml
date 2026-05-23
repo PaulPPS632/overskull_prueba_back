@@ -1,37 +1,87 @@
 services:
-  web:
-    image: nginx:alpine
-    ports:
-      - "8080:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf
-      - ./:/var/www/html
-    depends_on:
-      - app
   app:
-    build: 
+    build:
       context: .
-      dockerfile: Dockerfile
-    image: overskull_back
+      dockerfile: .docker/php/Dockerfile
+    container_name: overskull_back_app
+    ports:
+      - "9001:9000"
     volumes:
       - ./:/var/www/html
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
+      - DB_CONNECTION=pgsql
       - DB_HOST=db
-      - DB_PORT=3306
+      - DB_PORT=5432
       - DB_DATABASE=overskull
       - DB_USERNAME=root
       - DB_PASSWORD=secret
+    networks:
+      - laravel_network
+
+  nginx:
+    image: nginx:alpine
+    container_name: overskull_back_nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./:/var/www/html
+      - ./.docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+    restart: unless-stopped
+    depends_on:
+      - app
+    networks:
+      - laravel_network
 
   db:
     image: postgres:16-alpine
+    container_name: overskull_back_db
     ports:
       - "5432:5432"
+    restart: always
     environment:
       - POSTGRES_DB=overskull
       - POSTGRES_USER=root
       - POSTGRES_PASSWORD=secret
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d overskull"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     volumes:
       - db_data:/var/lib/postgresql/data
+    networks:
+      - laravel_network
+
+  supervisor:
+    build:
+      context: .
+      dockerfile: .docker/php-supervisor/Dockerfile
+    container_name: overskull_back_supervisor
+    volumes:
+      - ./:/var/www/html
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_started
+      db:
+        condition: service_healthy
+    environment:
+      - DB_CONNECTION=pgsql
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_DATABASE=overskull
+      - DB_USERNAME=root
+      - DB_PASSWORD=secret
+    networks:
+      - laravel_network
 
 volumes:
   db_data:
+
+networks:
+  laravel_network:
+    driver: bridge
